@@ -1,12 +1,56 @@
 <?php
 /*
-Plugin Name: Post Extractor
-Description: A plugin to extract post data and create .mdx files
+Plugin Name: $hibaKing: PressLesssPost 
+Description: A plugin to extract post data and create .mdx files formatted for use w/ Frontmatter commonly needed or used for SEO and custom taxonmoies needed to render the standard WordPress content used by sites; including the post title, author, date, featured image, and content.
 Version: 1.0
-Author: Your Name
+Author: $hibaKing
 */
 
 function post_extractor_activate() {
+    add_option('post_extractor_output_path', '');
+}
+register_activation_hook(__FILE__, 'post_extractor_activate');
+
+function post_extractor_deactivate() {
+    delete_option('post_extractor_output_path');
+}
+register_deactivation_hook(__FILE__, 'post_extractor_deactivate');
+
+function post_extractor_admin_menu() {
+    add_options_page('Post Extractor Settings', 'Post Extractor', 'manage_options', 'post-extractor', 'post_extractor_settings_page');
+}
+add_action('admin_menu', 'post_extractor_admin_menu');
+
+function post_extractor_settings_page() {
+    ?>
+    <div class="wrap">
+        <h1>Post Extractor Settings</h1>
+        <form method="post" action="options.php">
+            <?php
+            settings_fields('post-extractor');
+            do_settings_sections('post-extractor');
+            submit_button();
+            ?>
+        </form>
+    </div>
+    <?php
+}
+
+function post_extractor_admin_init() {
+    register_setting('post-extractor', 'post_extractor_output_path');
+
+    add_settings_section('post-extractor-settings', 'Settings', null, 'post-extractor');
+
+    add_settings_field('post_extractor_output_path', 'Output Path', 'post_extractor_output_path_callback', 'post-extractor', 'post-extractor-settings');
+}
+add_action('admin_init', 'post_extractor_admin_init');
+
+function post_extractor_output_path_callback() {
+    $output_path = esc_attr(get_option('post_extractor_output_path'));
+    echo "<input type='text' name='post_extractor_output_path' value='$output_path' />";
+}
+
+function post_extractor_export_posts() {
     // Query for all posts
     $args = array(
         'post_type' => 'post',
@@ -67,11 +111,12 @@ function post_extractor_activate() {
             $mdx_content .= $content;
 
             // Write to file
-            $filename = '/Users/Shared/WordPress Local/mdx' .
-             $slug . '.mdx';
+            $output_path = esc_attr(get_option('post_extractor_output_path'));
+            $filename = $output_path . '/' . $slug . '.mdx';
             file_put_contents($filename, $mdx_content);
         }
         wp_reset_postdata();
     }
 }
-register_activation_hook(__FILE__, 'post_extractor_activate');
+add_action('admin_init', 'post_extractor_export_posts');
+?>
