@@ -168,3 +168,4 @@ function post_extractor_delete_temp_dir($dir)
             return false;
         }
     }
+}
