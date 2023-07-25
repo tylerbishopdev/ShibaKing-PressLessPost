@@ -1,68 +1,67 @@
 <?php
-/*
-Plugin Name: $hibaKing: PressLesssPost 
-Description: A plugin to extract post data and create .mdx files formatted for use w/ Frontmatter commonly needed or used for SEO and custom taxonmoies needed to render the standard WordPress content used by sites; including the post title, author, date, featured image, and content.
-Version: 1.0
-Author: $hibaKing
-*/
+/**
+ * Plugin Name: Post Extractor
+ * Plugin URI: https://www.yourwebsite.com/post-extractor
+ * Description: This plugin extracts specified fields from all posts and saves them as .mdx files in a compressed folder.
+ * Version: 1.0
+ * Author: Your Name
+ * Author URI: https://www.yourwebsite.com/
+ **/
 
-function post_extractor_activate() {
-    add_option('post_extractor_output_path', '');
+function post_extractor_menu()
+{
+    add_options_page(
+        'Post Extractor',
+        'Post Extractor',
+        'manage_options',
+        'post-extractor',
+        'post_extractor_options_page'
+    );
 }
-register_activation_hook(__FILE__, 'post_extractor_activate');
+add_action('admin_menu', 'post_extractor_menu');
 
-function post_extractor_deactivate() {
-    delete_option('post_extractor_output_path');
-}
-register_deactivation_hook(__FILE__, 'post_extractor_deactivate');
-
-function post_extractor_admin_menu() {
-    add_options_page('Post Extractor Settings', 'Post Extractor', 'manage_options', 'post-extractor', 'post_extractor_settings_page');
-}
-add_action('admin_menu', 'post_extractor_admin_menu');
-
-function post_extractor_settings_page() {
+function post_extractor_options_page()
+{
+    if (!current_user_can('manage_options')) {
+        wp_die(__('You do not have sufficient permissions to access this page.'));
+    }
     ?>
     <div class="wrap">
-        <h1>Post Extractor Settings</h1>
-        <form method="post" action="options.php">
-            <?php
-            settings_fields('post-extractor');
-            do_settings_sections('post-extractor');
-            submit_button();
-            ?>
+        <h1>Post Extractor</h1>
+        <form method="post" action="options-general.php?page=post-extractor">
+            <?php wp_nonce_field('post_extractor_export', 'post_extractor_nonce'); ?>
+            <p>Click the button below to export all posts as .mdx files in a compressed folder.</p>
+            <input type="submit" name="submit" id="submit" class="button button-primary" value="We'll See">
         </form>
     </div>
     <?php
+
+    if ($_SERVER['REQUEST_METHOD'] == 'POST' && wp_verify_nonce($_POST['post_extractor_nonce'], 'post_extractor_export')) {
+        post_extractor_export_posts();
+    }
 }
 
-function post_extractor_admin_init() {
-    register_setting('post-extractor', 'post_extractor_output_path');
+function post_extractor_export_posts()
+{
+    // Create a unique temporary directory for this export
+    $upload_dir = wp_upload_dir();
+    $temp_dir = trailingslashit($upload_dir['basedir']) . 'post_extractor_exports/' . uniqid();
+    wp_mkdir_p($temp_dir);
 
-    add_settings_section('post-extractor-settings', 'Settings', null, 'post-extractor');
-
-    add_settings_field('post_extractor_output_path', 'Output Path', 'post_extractor_output_path_callback', 'post-extractor', 'post-extractor-settings');
-}
-add_action('admin_init', 'post_extractor_admin_init');
-
-function post_extractor_output_path_callback() {
-    $output_path = esc_attr(get_option('post_extractor_output_path'));
-    echo "<input type='text' name='post_extractor_output_path' value='$output_path' />";
-}
-
-function post_extractor_export_posts() {
-    // Query for all posts
+    // Query the posts
     $args = array(
         'post_type' => 'post',
         'post_status' => 'publish',
         'posts_per_page' => -1,
     );
-   
     $query = new WP_Query($args);
 
+    // Loop through the posts
     if ($query->have_posts()) {
         while ($query->have_posts()) {
             $query->the_post();
+
+            // Extract the desired data
 
             $id = get_the_ID();
             $date = get_the_date('c');
@@ -106,13 +105,68 @@ function post_extractor_export_posts() {
             $mdx_content .= "---\n\n";
             $mdx_content .= $content;
 
-            // Write to file
-            $output_path = esc_attr(get_option('post_extractor_output_path'));
-            $filename = $output_path . '/' . $slug . '.mdx';
+            // ...
+
+            // Write the .mdx file
+            $filename = trailingslashit($temp_dir) . get_post_field('post_name') . '.mdx';
             file_put_contents($filename, $mdx_content);
         }
-        wp_reset_postdata();
     }
+
+    // Create the zip file
+    $zip_file = trailingslashit($upload_dir['basedir']) . 'post_extractor_exports/export_' . time() . '.zip';
+    $zip = new ZipArchive();
+    if ($zip->open($zip_file, ZipArchive::CREATE | ZipArchive::OVERWRITE)) {
+        $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($temp_dir), RecursiveIteratorIterator::LEAVES_ONLY);
+        foreach ($files as $name => $file) {
+            if (!$file->isDir()) {
+                $filePath = $file->getRealPath();
+                $relativePath = substr($filePath, strlen($temp_dir) + 1);
+                $zip->addFile($filePath, $relativePath);
+            }
+        }
+        $zip->close();
+    }
+
+    // Delete the temporary directory
+    post_extractor_delete_temp_dir($temp_dir);
+
+    // Output the zip file to the browser
+    header('Content-Description: File Transfer');
+    header('Content-Type: application/octet-stream');
+    header('Content-Disposition: attachment; filename=' . basename($zip_file));
+    header('Content-Transfer-Encoding: binary');
+    header('Expires: 0');
+    header('Cache-Control: must-revalidate');
+    header('Pragma: public');
+    header('Content-Length: ' . filesize($zip_file));
+    readfile($zip_file);
+
+    // Delete the zip file
+    unlink($zip_file);
+
+    // Terminate the script to avoid the admin footer being appended to the file download
+    die();
 }
-add_action('admin_init', 'post_extractor_export_posts');
-?>
+
+function post_extractor_delete_temp_dir($dir)
+{
+    if (!file_exists($dir)) {
+        return true;
+    }
+
+    if (!is_dir($dir)) {
+        return unlink($dir);
+    }
+
+    foreach (scandir($dir) as $item) {
+        if ($item == '.' || $item == '..') {
+            continue;
+        }
+
+        if (!post_extractor_delete_temp_dir($dir . DIRECTORY_SEPARATOR . $item)) {
+            return false;
+        }
+    }
+
+   
