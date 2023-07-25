@@ -8,62 +8,54 @@
  * Author URI: https://tyler.farm
  **/
 
-function post_extractor_menu()
-{
-    add_options_page(
-        'Post Extractor',
-        'Post Extractor',
-        'manage_options',
-        'post-extractor',
-        'post_extractor_options_page'
-    );
 }
-add_action('admin_menu', 'post_extractor_menu');
-
-function post_extractor_options_page()
-{
-    if (!current_user_can('manage_options')) {
-        wp_die(__('You do not have sufficient permissions to access this page.'));
-    }
-    ?>
-    <div class="wrap">
-        <h1>Post Extractor</h1>
-        <form method="post" action="options-general.php?page=post-extractor">
-            <?php wp_nonce_field('post_extractor_export', 'post_extractor_nonce'); ?>
-            <p>Click the button below to export all posts as .mdx files in a compressed folder.</p>
-            <input type="submit" name="submit" id="submit" class="button button-primary" value="We'll See">
-        </form>
-    </div>
-    <?php
-
-    if ($_SERVER['REQUEST_METHOD'] == 'POST' && wp_verify_nonce($_POST['post_extractor_nonce'], 'post_extractor_export')) {
-        post_extractor_export_posts();
-    }
+function post_extractor_admin_init() {
+    register_setting('post-extractor', 'post_extractor_output_path');
+    add_settings_section('post-extractor-settings', 'Settings', null, 'post-extractor');
+    add_settings_field('post_extractor_output_path', 'Output Path', 'post_extractor_output_path_callback', 'post-extractor', 'post-extractor-settings');
 }
-
-function post_extractor_export_posts()
-{
-    // Create a unique temporary directory for this export
-    $upload_dir = wp_upload_dir();
-    $temp_dir = trailingslashit($upload_dir['basedir']) . 'post_extractor_exports/' . uniqid();
-    wp_mkdir_p($temp_dir);
-
-    // Query the posts
+add_action('admin_init', 'post_extractor_admin_init');
+function post_extractor_output_path_callback() {
+    $output_path = esc_attr(get_option('post_extractor_output_path'));
+    echo "<input type='text' name='post_extractor_output_path' value='$output_path' />";
+}
+function post_extractor_export_posts() {
+    // Query for all posts
     $args = array(
         'post_type' => 'post',
         'post_status' => 'publish',
         'posts_per_page' => -1,
     );
+
     $query = new WP_Query($args);
 
-    // Loop through the posts
     if ($query->have_posts()) {
         while ($query->have_posts()) {
             $query->the_post();
 
-            // Extract the desired data
-
+            // Extract post data
             $id = get_the_ID();
+            $date = get_the_date('c', $id);
+            $guid = get_the_guid($id);
+            $modified = get_the_modified_date('c', $id);
+            $slug = get_post_field('post_name', $id);
+            $status = get_post_status($id);
+            $type = get_post_type($id);
+            $link = get_permalink($id);
+            $title = get_the_title($id);
+            $content = apply_filters('the_content', get_post_field('post_content', $id));
+
+            // The author's data
+            $author_id = get_post_field('post_author', $id);
+            $author_data = get_userdata($author_id);
+            $author_name = $author_data->display_name;
+            $author_url = get_author_posts_url($author_id);
+            $author_email = $author_data->user_email;
+            $author_website = $author_data->user_url;
+            $author_description = get_the_author_meta('description', $author_id);
+
+            // Featured image
+            $featured_image = get_the_post_thumbnail_url($id, 'full');
             $date = get_the_date('c');
             $date_gmt = get_the_date('c');
             $guid = get_the_guid();
@@ -83,6 +75,10 @@ function post_extractor_export_posts()
             $author_description = get_the_author_meta('description');
             $author_avatar_url = get_avatar_url($author);
 
+            // Post excerpt
+            $excerpt = get_the_excerpt($id);
+
+            // Build frontmatter and content
             // Start the mdx content with the frontmatter
             $mdx_content = "---\n";
             $mdx_content .= "id: \"$id\"\n";
@@ -100,72 +96,23 @@ function post_extractor_export_posts()
             $mdx_content .= "featured_image: \"$featured_image\"\n";
             $mdx_content .= "category: \"" . $category[0]->cat_name . "\"\n";
             $mdx_content .= "author: \"$author_name\"\n";
+            $mdx_content .= "author_url: \"$author_url\"\n";
+            $mdx_content .= "author_email: \"$author_email\"\n";
+            $mdx_content .= "author_website: \"$author_website\"\n";
             $mdx_content .= "author_description: \"$author_description\"\n";
+            $mdx_content .= "featured_image: \"$featured_image\"\n";
+            $mdx_content .= "description: \"$excerpt\"\n";
             $mdx_content .= "author_avatar_url: \"$author_avatar_url\"\n";
             $mdx_content .= "---\n\n";
             $mdx_content .= $content;
 
-            // ...
-
-            // Write the .mdx file
-            $filename = trailingslashit($temp_dir) . get_post_field('post_name') . '.mdx';
+            // Write to file
+            $output_path = esc_attr(get_option('post_extractor_output_path'));
+            $filename = $output_path . '/' . $slug . '.mdx';
             file_put_contents($filename, $mdx_content);
         }
-    }
-
-    // Create the zip file
-    $zip_file = trailingslashit($upload_dir['basedir']) . 'post_extractor_exports/export_' . time() . '.zip';
-    $zip = new ZipArchive();
-    if ($zip->open($zip_file, ZipArchive::CREATE | ZipArchive::OVERWRITE)) {
-        $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($temp_dir), RecursiveIteratorIterator::LEAVES_ONLY);
-        foreach ($files as $name => $file) {
-            if (!$file->isDir()) {
-                $filePath = $file->getRealPath();
-                $relativePath = substr($filePath, strlen($temp_dir) + 1);
-                $zip->addFile($filePath, $relativePath);
-            }
-        }
-        $zip->close();
-    }
-
-    // Delete the temporary directory
-    post_extractor_delete_temp_dir($temp_dir);
-
-    // Output the zip file to the browser
-    header('Content-Description: File Transfer');
-    header('Content-Type: application/octet-stream');
-    header('Content-Disposition: attachment; filename=' . basename($zip_file));
-    header('Content-Transfer-Encoding: binary');
-    header('Expires: 0');
-    header('Cache-Control: must-revalidate');
-    header('Pragma: public');
-    header('Content-Length: ' . filesize($zip_file));
-    readfile($zip_file);
-
-    // Delete the zip file
-    unlink($zip_file);
-
-    // Terminate the script to avoid the admin footer being appended to the file download
-    die();
-}
-
-function post_extractor_delete_temp_dir($dir)
-{
-    if (!file_exists($dir)) {
-        return true;
-    }
-
-    if (!is_dir($dir)) {
-        return unlink($dir);
-    }
-
-    foreach (scandir($dir) as $item) {
-        if ($item == '.' || $item == '..') {
-            continue;
-        }
-
-        if (!post_extractor_delete_temp_dir($dir . DIRECTORY_SEPARATOR . $item)) {
-            return false;
-        }
+        wp_reset_postdata();
     }
 }
+add_action('admin_init', 'post_extractor_export_posts');
+?>
