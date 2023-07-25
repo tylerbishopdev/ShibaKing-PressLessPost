@@ -1,11 +1,11 @@
 <?php
 /**
- * Plugin Name: Post Extractor
- * Plugin URI: https://www.yourwebsite.com/post-extractor
+ * Plugin Name: $hiba-UnPressPoster
+ * Plugin URI: https:tyler.farm
  * Description: This plugin extracts specified fields from all posts and saves them as .mdx files in a compressed folder.
  * Version: 1.0
- * Author: Your Name
- * Author URI: https://www.yourwebsite.com/
+ * Author: $hibaking
+ * Author URI: https:tyler.farm
  **/
 
 function post_extractor_menu()
